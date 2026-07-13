@@ -31,6 +31,15 @@ AIRTABLE_REVIEWS_TABLE = os.environ.get('AIRTABLE_REVIEWS_TABLE')
 
 IMGUR_CLIENT_ID = os.environ.get('IMGUR_CLIENT_ID')
 IMGUR_CLIENT_SECRET = os.environ.get('IMGUR_CLIENT_SECRET')
+IMGUR_USER_AGENT = os.environ.get('IMGUR_USER_AGENT')
+
+LOOKBACK_DAYS = os.environ.get('REVIEW_LOOKBACK_DAYS')
+if LOOKBACK_DAYS:
+    LOOKBACK_DAYS = int(LOOKBACK_DAYS)
+
+ENABLE_POST_REPLIES = os.environ.get('ENABLE_POST_REPLIES', 'true').lower() in (
+    'true', '1', 'yes',
+)
 
 # Load Airtable and Get Max UTC
 print('\nInitializing Airtable Client... \n')
@@ -42,11 +51,22 @@ sellers_table = base.table('SELLERS')
 factories_table = base.table('FACTORIES')
 styles_table = base.table('STYLES')
 
-reviews_records = reviews_table.all(fields=['created_utc'])
-df = pd.DataFrame(reviews_records)
-reviews_df = pd.json_normalize(df.fields)
-utcs = reviews_df['created_utc'].to_list()
-max_utc = max(utcs)
+if LOOKBACK_DAYS:
+    max_utc = time.time() - (LOOKBACK_DAYS * 24 * 60 * 60)
+    print(f'Using {LOOKBACK_DAYS}-day lookback (max_utc={max_utc})\n')
+else:
+    reviews_records = reviews_table.all(fields=['created_utc'])
+    df = pd.DataFrame(reviews_records)
+    reviews_df = pd.json_normalize(df.fields)
+    utcs = reviews_df['created_utc'].to_list()
+    max_utc = max(utcs) if utcs else 0
+    print(f'Using last Airtable review (max_utc={max_utc})\n')
+
+print(
+    'Post replies enabled\n'
+    if ENABLE_POST_REPLIES
+    else 'Post replies disabled (Airtable writes will still run)\n'
+)
 
 # LOAD REDDIT & SUBREDDIT
 
@@ -255,7 +275,7 @@ def get_reddit_post(submission):
                     api_url = f'https://api.imgur.com/3/album/{album_hash}/images'
                     headers = {
                         'Authorization': f'Client-ID {IMGUR_CLIENT_ID}',
-                        'User-Agent': REDDIT_USER_AGENT,
+                        'User-Agent': IMGUR_USER_AGENT,
                     }
                     request = requests.get(api_url, headers=headers)
                     if request:
@@ -332,16 +352,28 @@ def get_reddit_post(submission):
             # Reply to Submission
             pp.pprint(submission.url)
             pp.pprint(text_reply)
-            comment = submission.reply(body=text_reply)
-            comment.mod.distinguish(sticky=True)
+            if ENABLE_POST_REPLIES:
+                comment = submission.reply(body=text_reply)
+                comment.mod.distinguish(sticky=True)
+            else:
+                print('Skipping Reddit reply (ENABLE_POST_REPLIES=false)\n')
 
 
 ### GET POST DETAILS ####
-for submission in subreddit.stream.submissions():
-
+def process_submission(submission):
     try:
         get_reddit_post(submission)
-
     except ConnectionError:
         load_reddit()
         get_reddit_post(submission)
+
+
+if LOOKBACK_DAYS:
+    # Backfill recent posts instead of waiting on the live stream
+    for submission in subreddit.new(limit=500):
+        if submission.created_utc <= max_utc:
+            break
+        process_submission(submission)
+else:
+    for submission in subreddit.stream.submissions():
+        process_submission(submission)
