@@ -432,7 +432,7 @@ def parse_imgur_album(post_body, submission_id=None):
         return []
 
     if payload.get("success"):
-        return payload["data"][:5]
+        return payload["data"][:10]
 
     print(f"Imgur API returned an error for submission {submission_id}: {payload}")
     return []
