@@ -124,7 +124,6 @@ REGEX = {
     },
 }
 
-# Load Airtable
 print("\nInitializing Airtable Client... \n")
 api = Api(AIRTABLE_API_KEY)
 base = api.base(AIRTABLE_BASE_ID)
