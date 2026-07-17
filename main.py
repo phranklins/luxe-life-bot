@@ -197,6 +197,8 @@ reddit, subreddit = load_reddit()
 ######## HELPER FUNCTIONS
 ######################################################
 
+### LOAD REFERENCE LISTS ###
+
 def load_cardinal_objects():
     brands_records = brands_table.all()
     df = pd.DataFrame(brands_records)
@@ -297,6 +299,8 @@ def parse_review_body(post_body):
 
     return regex_data
 
+### PARSE IMGUR ALBUM INTO INDIVIDUAL IMAGE LINKS ###
+
 def parse_imgur_album(post_body, submission_id=None):
     imgur_images = []
     album_regex = r"https://imgur\.com/(?:a|gallery)/[^\s)\]]+"
@@ -324,6 +328,7 @@ def parse_imgur_album(post_body, submission_id=None):
     print(f"Imgur API returned an error for submission {submission_id}: {payload}")
     return []
 
+### PARSE REDDIT GALLERY OR IMAGE ###
 
 def parse_reddit_images(submission):
     images = []
@@ -344,6 +349,7 @@ def parse_reddit_images(submission):
 
     return images
 
+### PREPARE ATTACHMENT UPLOAD ###
 
 def upload_attachments(record_id, images, submission_id=None):
     if not images:
@@ -351,6 +357,7 @@ def upload_attachments(record_id, images, submission_id=None):
     
     print(f"[{submission_id}] Downloading {len(images)} images to push directly to Airtable...")
 
+    # If pyairtable supports upload_attachment, use it to upload binary content 
     if hasattr(reviews_table, "upload_attachment"):
         for image in images:
             link = image.get("link")
@@ -378,7 +385,7 @@ def upload_attachments(record_id, images, submission_id=None):
                     
             except Exception as e:
                 print(f"Failed to upload attachment for record {record_id}, submission {submission_id}: {repr(e)}")
-    else:
+    else: # Fallback: attach remote URLs via an update (Airtable accepts attachments as objects with url)
         try:
             attachments = []
             for image in images:
@@ -391,6 +398,7 @@ def upload_attachments(record_id, images, submission_id=None):
         except Exception as e:
             print(f"Failed to attach URLs for record {record_id}, submission {submission_id}: {repr(e)}")
 
+### CREATE AIRTABLE RECORD ###
 
 def build_airtable_record(submission, regex_data, title_data, imgur_images):
     record = {
@@ -410,6 +418,8 @@ def build_airtable_record(submission, regex_data, title_data, imgur_images):
     
     return record
 
+### CREATE PRE-FILL LINK ###
+
 def build_prefill_link(reply_sharelink, record_id):
     prefill = "https://airtable.com/shrgaB9P7ktxOgdJJ"
     first = True
@@ -424,6 +434,7 @@ def build_prefill_link(reply_sharelink, record_id):
     prefill += f"&prefill_Review={quote_plus(str(record_id))}"
     return prefill
 
+### CREATE POST REPLY OBJECTS ###
 def build_reply_objects(title_data, new_record):
     reply_table = {
         FIELD_BRAND: get_name(title_data, FIELD_BRAND),
@@ -455,6 +466,8 @@ def build_reply_table(reply_table):
     values = "|".join(str(v) if v is not None else " - " for v in reply_table.values())
     return "\n".join([headers, divider, values])
 
+### CHECK IF RECORD ALREADY EXISTS ###
+
 def record_exists(submission_id):
     """O(1) Deduplication Check against memory."""
     return submission_id in existing_ids
@@ -470,6 +483,8 @@ def bot_already_replied(submission):
 ######################################################
 ######## CORE PROCESSING LOGIC
 ######################################################
+
+### GET NEW POSTS ###
 
 def get_reddit_post(submission):
 
@@ -489,6 +504,7 @@ def get_reddit_post(submission):
 
     print(title_data)
 
+    # PARSE POST BODY WITH REGEX
     regex_data = parse_review_body(submission.selftext)
     imgur_images = parse_imgur_album(submission.selftext, submission.id)
     new_record = build_airtable_record(submission, regex_data, title_data, [])
@@ -496,9 +512,11 @@ def get_reddit_post(submission):
     # Push new record text to Airtable
     record = reviews_table.create(new_record, typecast=True)
     record_id = record["id"]
+    # Immediately add to local state to prevent future duplicates on this run
     existing_ids.add(submission.id)
     print(f"[{submission.id}] Base text record created in Airtable.")
 
+    # Extract images from both Imgur and Native Reddit
     imgur_images = parse_imgur_album(submission.selftext, submission.id)
     reddit_images = parse_reddit_images(submission)
     all_images = (reddit_images + imgur_images)[:10]
@@ -527,7 +545,7 @@ def get_reddit_post(submission):
                     comment.mod.distinguish(sticky=True)
                     print(f"✓ Reply posted and stickied for {submission.id}\n")
                 except Exception as mod_err:
-                    print(f"✓ Reply posted, but could not sticky. {mod_err}\n")
+                    print(f"✓ Reply posted, but could not sticky (Missing mod privileges). {mod_err}\n")
             except Exception as reply_err:
                 # ROLLBACK: If reply fails (e.g., rate limit), delete Airtable record so cron retries it
                 print(f"Failed to post Reddit reply for {submission.id}: {reply_err}")
@@ -538,6 +556,7 @@ def get_reddit_post(submission):
     else:
         print("Skipping Reddit reply (ENABLE_POST_REPLIES=false)\n")
 
+### GET POST DETAILS ####
 
 def process_submission(submission):
     try:
