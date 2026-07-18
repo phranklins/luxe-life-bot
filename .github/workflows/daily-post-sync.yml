@@ -8,6 +8,10 @@ on:
 jobs:
   run-daily-post-sync:
     runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write # Grant GitHub Actions permission to push the keepalive commit
+      
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -44,3 +48,7 @@ jobs:
           python -V
           # Run the main script
           python main.py
+
+      # Keepalive action to check last commit time and automatically pushes an empty, silent dummy commit to your repository before the 60 days inactivity expiration.
+      - name: Keep GitHub Actions Alive
+        uses: gautamkrishnar/keepalive-workflow@v2
